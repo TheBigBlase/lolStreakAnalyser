@@ -4,6 +4,12 @@ import time
 import pycurl as curl
 from io import BytesIO
 
+###TODO : - optimize api call (for now 3 if no cache)
+#         - remove useless prints
+#         - keep stylish batch prints for more styles points
+#         - cache should be separatted in mutliple files ?
+#         - putting this to merge, take care of that plz thx <3
+
 
 class GameExtractor:
     """
@@ -18,7 +24,7 @@ class GameExtractor:
         self.use_cache_file = use_cache_file
 
         if use_cache_file:
-            self.cache_path = "./cache.json"
+            self.cache_path = "./cache.json" #beware windows, may fuck up relative path
 
             with open(self.cache_path, "r") as cache_file:
                 self.cache_data = json.load(cache_file)
@@ -52,6 +58,46 @@ class GameExtractor:
         # put everything into json
         return json.loads(buffer.getvalue().decode('iso-8859-1'))
 
+    def getIdByPuuid(self, puuid: str) -> str:
+        """
+        Gets the id of the summoner linked by puuid
+        :param puuid: puuid of a summoner
+        :return: id
+        """
+
+        # Checks if the puuid is already in cache
+        # NOTE not sure if loading and then parsing a 6mB json file 
+        # is more efficient 
+
+        # THIS IS NOT WORKING ie we're making another api call
+        if self.use_cache_file:
+            for k in self.cache_data: #look through all sum names
+                if "id" in k and puuid in k:
+                    return k["id"]
+
+        url = 'https://euw1.api.riotgames.com/lol/summoner/v4/summoners/by-puuid/' \
+              + puuid + '?api_key=' + self.api_key
+
+        # Executing API request
+        res = self.execCurl(url)
+        print(res)
+        summoner_name = res["name"]
+
+        # Saving the results in cache file if activated
+        if self.use_cache_file:
+            self.cache_data[summoner_name] = res
+
+            with open(self.cache_path, "w", encoding="utf-8") as file:
+                file.writelines(json.dumps(self.cache_data))
+
+            file.close()
+
+        return res["id"]
+
+
+
+    # NOTE no need of default str since default handled in main
+
     def getPuuidBySummonerName(self, summoner_name: str = "Phoque éberlué") -> str:
         """
         Gets the puuid of the summoner
@@ -60,6 +106,8 @@ class GameExtractor:
         """
 
         # Checks if the puuid is already in cache
+        # NOTE not sure if loading and then parsing a 6mB json file 
+        # is more efficient 
         if self.use_cache_file \
                 and summoner_name in self.cache_data \
                 and "puuid" in self.cache_data[summoner_name]:
@@ -77,7 +125,9 @@ class GameExtractor:
             self.cache_data[summoner_name] = res
 
             with open(self.cache_path, "w", encoding="utf-8") as file:
-                file.write(json.dumps(self.cache_data))
+                file.writelines(json.dumps(self.cache_data))
+
+            file.close()
 
         return res["puuid"]
 
@@ -107,7 +157,9 @@ class GameExtractor:
             self.cache_data[summoner_name]["matches_id"] = res
 
             with open(self.cache_path, "w", encoding="utf-8") as file:
-                file.write(json.dumps(self.cache_data))
+                file.writelines(json.dumps(self.cache_data))
+
+            file.close()
 
         return res
 
@@ -128,7 +180,7 @@ class GameExtractor:
         url = f'https://europe.api.riotgames.com/lol/match/v5/matches/{match_id}?api_key={self.api_key}'
 
         res = self.execCurl(url)
-        print(res)
+        #print(res)
 
         # Saves match data in cache file
         if self.use_cache_file:
@@ -139,7 +191,10 @@ class GameExtractor:
             self.cache_data[summoner_name]["matches_data"][match_id] = res
 
             with open(self.cache_path, "w", encoding="utf-8") as file:
-                file.write(json.dumps(self.cache_data))
+                file.writelines(json.dumps(self.cache_data))
+
+            file.close()
+
 
         return res
 
@@ -153,47 +208,86 @@ class GameExtractor:
         time.sleep(1)
 
         res = {}
+        counter = 0
         for i, match_id in enumerate(matches_id):
+            #stylish, print state of current queries
+            current_progress = "{:.2f}".format(counter * 100 / len(matches_id))
+            print(f"\r getting data from matches : {current_progress} % done", end='')
             # Respecting rate limits of riot API
             if i % 20 == 0:
                 time.sleep(1)
+            counter += 1 
 
             res[match_id] = self.getMatchData(match_id, summoner_name)
 
+        print(res)
         return res
 
-    # ------------------------- NOT WORKING ----------------------------------
-    def getSummonerAllMatchesID(self, puuid: str, season: int) -> set[str]:
+    def getNumberOfMatches(self, puuid) -> int:
+        """
+        Gets number of match of a summoner by puuid
+        :param puuid: puuid of a summoner
+        :return: numer of matches of a sum
+        """
+
+        summoner_id = self.getIdByPuuid(puuid)
+        url = f'https://euw1.api.riotgames.com/lol/league/v4/entries/by-summoner/{summoner_id}'\
+                + "?api_key=" + self.api_key
+
+        res = self.execCurl(url)
+
+        for k in res:
+            if k["queueType"] == "RANKED_SOLO_5x5": #only care about ranked
+                return int(k["wins"] + k["losses"])
+        return -1
+
+
+
+    # -------------------------  WORKING ---------------------------------- ??? 
+    def getSummonerAllMatchesID(self, summoner_name: str) -> list[str]:
         """
         Gets the matches IDs of a given summoner
-        :param puuid: the puuid of the summoner
-        :param season: the year of the season e.g: S12 = 2022
+        :param summoner_name: the summoner name
         :return: a list of match ID
         """
-        matches_id = set()
 
-        start_date = date.fromisocalendar(season, 1, 1)
-        start_time = time.mktime(start_date.timetuple())
+        # instead of proceeding by dates, lets look at the number of game in the season
+        # we're requesting a batch of 100 game, then the next one until 
+        # we gain no information, ie we append nothing to the list of matches
 
-        nb_day_this_season = (date.today() - start_date).days
+
+        puuid = self.getPuuidBySummonerName(summoner_name)
+        nb_matches = self.getNumberOfMatches(puuid)
+        matches_id = []  # list instead of set to extract data later
+        match_counter = 0
+
+        #start_date = date.fromisocalendar(season, 1, 1) 
+        #start_time = time.mktime(start_date.timetuple())
+
+        #nb_day_this_season = (date.today() - start_date).days
 
         # Gathering 100 games per 10 day
-        for i in range(0, int(nb_day_this_season / 10) + 1):
-            end_time = int(start_time + 60 * 60 * 24 * 10)
+        while match_counter < nb_matches: # while we can append new results
+            #end_time = int(start_time + 60 * 60 * 24 * 10)
 
+            #stylish, print state of current queries
+            current_progress = "{:.2f}".format(match_counter * 100 / nb_matches)
+            print(f"\r Gettig match list : {current_progress} % done", end='')
             url = f'https://europe.api.riotgames.com/lol/match/v5/matches/by-puuid/{puuid}/ids' \
-                  f'?startTime={int(start_time)}' \
-                  f'&?endTime={int(end_time)}' \
-                  f'&?start=0' \
+                  f'?start={match_counter}' \
                   f'&count=100' \
                   f'&api_key={self.api_key}' \
                   f'&queue=420'  # Indicates that we only want ranked games
 
             res = self.execCurl(url)
 
-            matches_id.update(res)
 
-            start_time = end_time
+
+            matches_id = matches_id + res
+            #matches_id[f'{match_counter}'] = res
+            match_counter+=100
+
+            #start_time = end_time
 
             time.sleep(1)
 

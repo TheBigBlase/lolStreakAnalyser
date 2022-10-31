@@ -22,5 +22,6 @@ Put your api key in the json file "apikey.json" like such :
 ```
 then launch it with : 
 ```bash 
-python ./src/main.py
+python ./src/main.py [-s | --summonerName "Phoque éberlué"] [-n | --noCache]
 ```
+replacing "Phoque éberlué" with your summoner name.
