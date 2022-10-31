@@ -16,8 +16,7 @@ Put your api key in the json file "apikey.json" like such :
 
 ```json
 {
-	"X-Riot-Token": "YOUR_TOKEN_HERE",
-	"SummonerName": "YourSummonerNameHere"
+	"X-Riot-Token": "YOUR_TOKEN_HERE"
 }
 ```
 then launch it with : 
