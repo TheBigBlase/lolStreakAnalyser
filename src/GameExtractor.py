@@ -16,20 +16,36 @@ class GameExtractor:
     Class used to extract data from Riot Games API
     """
 
-    def __init__(self, use_cache_file=True):
+    def __init__(self, use_cache_file=True, force_cache_reload=False):
         # load our summoner data
         with open("./apikey.json", "r") as key_file:
             self.json_file = json.load(key_file)
 
-        self.use_cache_file = use_cache_file
+        self.api_key = self.json_file["X-Riot-Token"]
 
-        if use_cache_file:
+        self.use_cache_file = use_cache_file
+        self.force_cache_reload = force_cache_reload
+
+        if force_cache_reload:
+            self.use_cache_file = True
+            self.cache_path = "./cache.json" #beware windows, may fuck up relative path
+            with open("./out/" + self.cache_path, "w") as cache_file:
+                cache_file.write("{}")
+
+            cache_file.close()
+            with open("./out/" + self.cache_path, "r") as cache_file:
+                self.cache_data = json.load(cache_file)
+
+            cache_file.close()
+
+        elif use_cache_file:
             self.cache_path = "./cache.json" #beware windows, may fuck up relative path
 
             with open(self.cache_path, "r") as cache_file:
                 self.cache_data = json.load(cache_file)
 
-        self.api_key = self.json_file["X-Riot-Token"]
+            cache_file.close()
+
 
     @staticmethod
     def sanitizeSummonerName(summoner_name: str):
@@ -87,8 +103,8 @@ class GameExtractor:
         if self.use_cache_file:
             self.cache_data[summoner_name] = res
 
-            with open(self.cache_path, "w", encoding="utf-8") as file:
-                file.writelines(json.dumps(self.cache_data))
+            with open("./out/" + self.cache_path, "a", encoding="utf-8") as file:
+                file.writelines(json.dumps(res, indent=4))
 
             file.close()
 
@@ -124,8 +140,8 @@ class GameExtractor:
         if self.use_cache_file:
             self.cache_data[summoner_name] = res
 
-            with open(self.cache_path, "w", encoding="utf-8") as file:
-                file.writelines(json.dumps(self.cache_data))
+            with open("./out/" + self.cache_path, "w", encoding="utf-8") as file:
+                file.writelines(json.dumps(res, indent=4))
 
             file.close()
 
@@ -133,7 +149,8 @@ class GameExtractor:
 
     def getSummonerMatchesID(self, puuid: str, summoner_name: str = "Phoque éberlué") -> list[str]:
         """
-        Gets the matches IDs of a given summoner
+        Gets the first 100 matches IDs of a given summoner. 
+        Please use getSummonerAllMatchesIDinstead to get all
         :param puuid: the puuid of the summoner
         :param summoner_name: the name of the summoner
         :return: a list of match ID
@@ -156,8 +173,8 @@ class GameExtractor:
         if self.use_cache_file:
             self.cache_data[summoner_name]["matches_id"] = res
 
-            with open(self.cache_path, "w", encoding="utf-8") as file:
-                file.writelines(json.dumps(self.cache_data))
+            with open("./out/" + self.cache_path, "a", encoding="utf-8") as file:
+                file.writelines(json.dumps(res, indent=4))
 
             file.close()
 
@@ -185,16 +202,17 @@ class GameExtractor:
         # Saves match data in cache file
         if self.use_cache_file:
             # Create a dictionary for matches data
-            if "matches_data" not in self.cache_data[summoner_name]:
-                self.cache_data[summoner_name]["matches_data"] = {}
+            #if "matches_data" not in self.cache_data[summoner_name]:
+            #    self.cache_data[summoner_name]["matches_data"] = {}
 
-            self.cache_data[summoner_name]["matches_data"][match_id] = res
+            #self.cache_data[summoner_name]["matches_data"][match_id] = res
 
-            with open(self.cache_path, "w", encoding="utf-8") as file:
-                file.writelines(json.dumps(self.cache_data))
+            with open(f"./out/{summoner_name}_{match_id}.json", "w", encoding="utf-8") as file:
+                file.writelines({json.dumps(res, indent=4)})
 
             file.close()
-
+            if res == None:
+                print('ERROR IN getMatchData')
 
         return res
 
@@ -207,20 +225,34 @@ class GameExtractor:
         """
         time.sleep(1)
 
+
         res = {}
-        counter = 0
         for i, match_id in enumerate(matches_id):
             #stylish, print state of current queries
-            current_progress = "{:.2f}".format(counter * 100 / len(matches_id))
-            print(f"\r getting data from matches : {current_progress} % done", end='')
-            # Respecting rate limits of riot API
-            if i % 20 == 0:
-                time.sleep(1)
-            counter += 1 
+            current_progress = "{:.2f}".format(i * 100 / len(matches_id))
+            print(f"\rGathering data from matches : {current_progress} % done", end='')
+            # Respecting rate limits of riot API (only for 20 secs)
+            #if i % 20 == 0:
+            #    time.sleep(1)
+            
 
             res[match_id] = self.getMatchData(match_id, summoner_name)
 
-        print(res)
+            # see if our summoner won :
+            has_won = False
+            champion_name = ""
+            for k in res[match_id]["info"]["participants"]:
+                if k["summonerName"] == summoner_name:
+                    has_won = k["win"]#json false not python False
+                    champion_name = k["championName"]
+
+            with open(f"./out/{summoner_name}_summuary.json", "a", encoding="utf-8") as file:
+                file.writelines({f"\"match_id\": \"{match_id}\"\n" \
+                        + f"\"win\": {has_won},\n" \
+                        + f"\"champion\": \"{champion_name}\""})
+
+            time.sleep(1) #dont blow up api calls (respecc 2 mins)
+
         return res
 
     def getNumberOfMatches(self, puuid) -> int:
@@ -239,11 +271,8 @@ class GameExtractor:
         for k in res:
             if k["queueType"] == "RANKED_SOLO_5x5": #only care about ranked
                 return int(k["wins"] + k["losses"])
-        return -1
+        return -1 # if found nothing, error
 
-
-
-    # -------------------------  WORKING ---------------------------------- ??? 
     def getSummonerAllMatchesID(self, summoner_name: str) -> list[str]:
         """
         Gets the matches IDs of a given summoner
@@ -254,7 +283,6 @@ class GameExtractor:
         # instead of proceeding by dates, lets look at the number of game in the season
         # we're requesting a batch of 100 game, then the next one until 
         # we gain no information, ie we append nothing to the list of matches
-
 
         puuid = self.getPuuidBySummonerName(summoner_name)
         nb_matches = self.getNumberOfMatches(puuid)
@@ -270,9 +298,10 @@ class GameExtractor:
         while match_counter < nb_matches: # while we can append new results
             #end_time = int(start_time + 60 * 60 * 24 * 10)
 
-            #stylish, print state of current queries
+            #stylish, print state of current queries {:.2f} is to keep 3 digits of float
             current_progress = "{:.2f}".format(match_counter * 100 / nb_matches)
-            print(f"\r Gettig match list : {current_progress} % done", end='')
+            print(f"\rGettig match list : {current_progress} % done", end='')
+
             url = f'https://europe.api.riotgames.com/lol/match/v5/matches/by-puuid/{puuid}/ids' \
                   f'?start={match_counter}' \
                   f'&count=100' \
@@ -280,8 +309,6 @@ class GameExtractor:
                   f'&queue=420'  # Indicates that we only want ranked games
 
             res = self.execCurl(url)
-
-
 
             matches_id = matches_id + res
             #matches_id[f'{match_counter}'] = res
@@ -292,5 +319,9 @@ class GameExtractor:
             time.sleep(1)
 
         print(matches_id)
+
+        # has to save ???
+        with open("./out/" + summoner_name + "_matchIds.json", "w", encoding="utf-8") as file:
+            file.writelines(json.dumps({"id_array" : matches_id},indent=4))
 
         return matches_id
