@@ -20,7 +20,10 @@ if __name__ == "__main__":
 
     GameExtractor = GameExtractor(use_cache_file = not(args.noCache), force_cache_reload = args.forceCacheReload)
 
-    summoner_name = GameExtractor.sanitizeSummonerName(args.summonerName)
+    #a function requires a non sanitzed username, for searching in json ! 
+    #summoner_name = GameExtractor.sanitizeSummonerName(args.summonerName)
+
+    summoner_name = args.summonerName
 
     puuid: str = GameExtractor.getPuuidBySummonerName(summoner_name)
     #old way
