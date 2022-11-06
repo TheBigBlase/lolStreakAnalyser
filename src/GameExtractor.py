@@ -1,8 +1,9 @@
 import json
-from datetime import date
+#from datetime import date
+from io import BytesIO
 import time
 import pycurl as curl
-from io import BytesIO
+from src.utils import sanitizeSummonerName
 
 ###TODO : - optimize api call (for now 3 if no cache)
 #         - remove useless prints
@@ -28,26 +29,42 @@ class GameExtractor:
 
         if force_cache_reload:
             self.use_cache_file = True
-            self.cache_path = "./cache.json" #beware windows, may fuck up relative path
-            with open("./out/" + self.cache_path, "w") as cache_file:
+            self.cache_path = "./out/cache.json" #beware windows, may fuck up relative path
+            with open(self.cache_path, "w") as cache_file:
                 cache_file.write("{}")
-
-            with open("./out/" + self.cache_path, "r") as cache_file:
-                self.cache_data = json.load(cache_file)
-
-        elif use_cache_file:
-            self.cache_path = "./cache.json" #beware windows, may fuck up relative path
 
             with open(self.cache_path, "r") as cache_file:
                 self.cache_data = json.load(cache_file)
 
-            cache_file.close()
+        elif use_cache_file:
+            self.cache_path = "./out/cache.json" #beware windows, may fuck up relative path
 
+            #create file if not exist
+            with open(self.cache_path, 'a') as cache_file:
+                pass
 
-    @staticmethod
-    def sanitizeSummonerName(summoner_name: str):
-        # Replacing spaces with plus
-        return summoner_name.replace(" ", "+")
+            #r+ is read and write
+            with open(self.cache_path, "r+") as cache_file:
+                #check if file empty
+                try:
+                    self.cache_data = json.load(cache_file)
+                    summoner_name = self.cache_data["name"]
+                    self.summuary_file = f"./out/{sanitizeSummonerName(summoner_name)}_summuary.json"
+                    with open(self.summuary_file, "r") as summuary_file:
+                        self.summuary_data = json.load(summuary_file)
+
+                #if emtpy then write
+                except json.JSONDecodeError:
+                    print("Exception json")
+                    self.cache_data = json.loads("")
+                    cache_file.write(self.cache_data)
+                except KeyError:
+                    print("error : no summuary or cache file ! "\
+                            + "please force cache refresh with -f.")
+                    exit(-1)
+
+        else:
+            self.cache_data = json.loads("")
 
     @staticmethod
     def execCurl(url: str) -> any:
@@ -93,16 +110,11 @@ class GameExtractor:
 
         # Executing API request
         res = self.execCurl(url)
-        print(res)
-        summoner_name = res["name"]
 
-        # Saving the results in cache file if activated
-        if self.use_cache_file:
-            self.cache_data[summoner_name] = res
 
-            #already written in getPuuidBySummonerName
-            #with open("./out/" + self.cache_path, "a", encoding="utf-8") as file:
-            #    file.writelines(json.dumps(res, indent=4))
+        #already written in getPuuidBySummonerName
+        #with open("./out/" + self.cache_path, "a", encoding="utf-8") as file:
+        #    file.writelines(json.dumps(res, indent=4))
 
         return res["id"]
 
@@ -117,34 +129,36 @@ class GameExtractor:
         :return: puuid
         """
 
-        summoner_name = self.sanitizeSummonerName(summoner_name)
         # Checks if the puuid is already in cache
         # NOTE not sure if loading and then parsing a 6mB json file 
-        # is more efficient 
-        if self.use_cache_file \
-                and summoner_name in self.cache_data \
-                and "puuid" in self.cache_data[summoner_name]:
-            return self.cache_data[summoner_name]["puuid"]
+        # is more efficient
+        if self.use_cache_file:
+            if summoner_name == self.cache_data["name"] :
+                if "puuid" in self.cache_data:
+                    return self.cache_data["puuid"]
+
+        summoner_name = sanitizeSummonerName(summoner_name)
 
         url = 'https://euw1.api.riotgames.com/lol/summoner/v4/summoners/by-name/' \
               + summoner_name + '?api_key=' + self.api_key
 
         # Executing API request
         res = self.execCurl(url)
+        print("Retrieved summoner data :")
         print(res)
 
         # Saving the results in cache file if activated
         if self.use_cache_file:
-            self.cache_data[summoner_name] = res
+            self.cache_data = res
 
-            with open("./out/" + self.cache_path, "w", encoding="utf-8") as file:
+            with open(self.cache_path, "w", encoding="utf-8") as file:
                 file.writelines(json.dumps(res, indent=4))
 
             file.close()
 
         return res["puuid"]
 
-    def getSummonerMatchesID(self, puuid: str, summoner_name: str = "Phoque éberlué") -> list[str]:
+    def getSummonerMatchesID(self, puuid: str, summoner_name: str = "Phoque éberlué") -> str|list[str]:
         """
         Gets the first 100 matches IDs of a given summoner. 
         Please use getSummonerAllMatchesIDinstead to get all
@@ -156,9 +170,8 @@ class GameExtractor:
         summoner_name = sanitizeSummonerName(summoner_name)
 
         # Checks if the matches id are in the cache file
-        if self.use_cache_file \
-                and "matches_id" in self.cache_data[summoner_name]:
-            return self.cache_data[summoner_name]["matches_id"]
+        if self.summuary_file:
+            return json.dumps(self.summuary_file, indent=4)
 
         url = f'https://europe.api.riotgames.com/lol/match/v5/matches/by-puuid/{puuid}/ids' \
               f'?start=0' \
@@ -170,12 +183,9 @@ class GameExtractor:
 
         # Saves matches id in the cache file
         if self.use_cache_file:
-            self.cache_data[summoner_name]["matches_id"] = res
 
-            with open("./out/" + self.cache_path, "a", encoding="utf-8") as file:
+            with open(self.summuary_file, "w", encoding="utf-8") as file:
                 file.writelines(json.dumps(res, indent=4))
-
-            file.close()
 
         return res
 
@@ -187,11 +197,11 @@ class GameExtractor:
         :return: match data
         """
 
-        summoner_name = self.sanitizeSummonerName(summoner_name)
+        summoner_name = sanitizeSummonerName(summoner_name)
 
         # Checks if the match data already in cache file
         if self.use_cache_file \
-                and "matches_data" in self.cache_data[summoner_name] \
+                and match_id in self.summuary_file \
                 and match_id in self.cache_data[summoner_name]["matches_data"]:
             return self.cache_data[summoner_name]["matches_data"][match_id]
 
@@ -227,6 +237,11 @@ class GameExtractor:
 
         #DONT sanitze sum name here
 
+        if self.use_cache_file \
+                and list(self.summuary_data.keys())[0]:
+            print("Using cached files for summuary file...")
+            return self.summuary_data
+
         res = {}
         json_file = {}
 
@@ -245,12 +260,10 @@ class GameExtractor:
             has_won = False
             champion_name = ""
 
-
             for k in res[match_id]["info"]["participants"]:
-                if k["summonerName"] == summoner_name:
+                if k["puuid"] == self.cache_data["puuid"]:
                     has_won = k["win"]#json false not python False
                     champion_name = k["championName"]
-
 
                     dictionary = {
                             match_id:{
@@ -266,7 +279,8 @@ class GameExtractor:
             time.sleep(1) #dont blow up api calls (respecc 2 mins)
 
         #last closing brace in json
-        with open(f"./out/{self.sanitizeSummonerName(summoner_name)}_summuary.json", "w", encoding="utf-8") as file:
+        with open(f"./out/{sanitizeSummonerName(summoner_name)}_summuary.json",\
+                "w", encoding="utf-8") as file:
             file.writelines(json.dumps(json_file, indent=4))
 
         return res
@@ -297,18 +311,23 @@ class GameExtractor:
         """
 
         # instead of proceeding by dates, lets look at the number of game in the season
-        # we're requesting a batch of 100 game, then the next one until 
+        # we're requesting a batch of 100 game, then the next one until
         # we gain no information, ie we append nothing to the list of matches
 
-        #useless, but still nice to remind
-        summoner_name = self.sanitizeSummonerName(summoner_name)
-
         puuid = self.getPuuidBySummonerName(summoner_name)
+        summoner_name = sanitizeSummonerName(summoner_name)
         nb_matches = self.getNumberOfMatches(puuid)
         matches_id = []  # list instead of set to extract data later
         match_counter = 0
 
-        #start_date = date.fromisocalendar(season, 1, 1) 
+        #if summuary has at least 1 game : 
+        #this way we bypass the mathces_id file, less memory used on runtime
+        if self.use_cache_file \
+                and list(self.summuary_data.keys())[0]:
+            print("using cached files for list of game ids...")
+            return list(self.summuary_data.keys())
+
+        #start_date = date.fromisocalendar(season, 1, 1)
         #start_time = time.mktime(start_date.timetuple())
 
         #nb_day_this_season = (date.today() - start_date).days
@@ -337,7 +356,8 @@ class GameExtractor:
 
             time.sleep(1)
 
-        print(f"\rPulled all matches id !")
+        #extra spaces to erease last line
+        print(f"\rPulled all matches id !          ")
 
         # has to save ???
         with open("./out/" + summoner_name + "_matchIds.json", "w", encoding="utf-8") as file:

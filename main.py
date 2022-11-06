@@ -1,4 +1,6 @@
 from src.GameExtractor import GameExtractor
+from src.Analyser import Analyser
+from src.utils import sanitizeSummonerName #useless now
 import argparse
 
 if __name__ == "__main__":
@@ -12,23 +14,30 @@ if __name__ == "__main__":
     parser.add_argument("-n", "--noCache", help = "do not use already retrieved data"\
             "(default = false)", action="store_true", default = False)
 
-    parser.add_argument("-f", "--forceCacheReload", help = "make a new cache file (useful for storing data)",\
+    parser.add_argument("-f", "--forceCacheReload", help = "make a new cache file "\
+            + "(useful for storing data)", action="store_true", default = False)
+
+    parser.add_argument("-a", "--analyse", help = "analyse the data",\
             action="store_true", default = False)
 
     args = parser.parse_args()
     ## END ARGUMENT PARSER
 
-    GameExtractor = GameExtractor(use_cache_file = not(args.noCache), force_cache_reload = args.forceCacheReload)
+    GameExtractor = GameExtractor(use_cache_file = not(args.noCache), \
+            force_cache_reload = args.forceCacheReload)
 
     #a function requires a non sanitzed username, for searching in json ! 
-    #summoner_name = GameExtractor.sanitizeSummonerName(args.summonerName)
+    #summoner_name = sanitizeSummonerName(args.summonerName)
 
     summoner_name = args.summonerName
 
-    puuid: str = GameExtractor.getPuuidBySummonerName(summoner_name)
+    #puuid: str = GameExtractor.getPuuidBySummonerName(summoner_name)
     #old way
     #matches_id: list[str] = GameExtractor.getSummonerMatchesID(puuid, summoner_name)
     #matches_data: list[any] = GameExtractor.getMatchesData(matches_id, summoner_name)
     #new way
     matches_ids = GameExtractor.getSummonerAllMatchesID(summoner_name)
     GameExtractor.getMatchesData(matches_ids, summoner_name)
+
+    if args.analyse:
+        Analyser(summoner_name)
