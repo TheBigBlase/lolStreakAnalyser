@@ -27,6 +27,8 @@ class GameExtractor:
         self.use_cache_file = use_cache_file
         self.force_cache_reload = force_cache_reload
 
+        self.summuary_data = json.loads("{}")
+
         if force_cache_reload:
             self.use_cache_file = True
             self.cache_path = "./out/cache.json" #beware windows, may fuck up relative path
@@ -86,6 +88,7 @@ class GameExtractor:
         c.close()
 
         # put everything into json, decode with special caracters
+
         return json.loads(buffer.getvalue().decode('utf-8'))
 
     def getIdByPuuid(self, puuid: str) -> str:
@@ -132,10 +135,14 @@ class GameExtractor:
         # Checks if the puuid is already in cache
         # NOTE not sure if loading and then parsing a 6mB json file 
         # is more efficient
-        if self.use_cache_file:
-            if summoner_name == self.cache_data["name"] :
-                if "puuid" in self.cache_data:
-                    return self.cache_data["puuid"]
+        try:
+            if self.use_cache_file:
+                if summoner_name == self.cache_data["name"] :
+                    if "puuid" in self.cache_data:
+                        return self.cache_data["puuid"]
+        #if key error, do next
+        except KeyError:
+            pass
 
         summoner_name = sanitizeSummonerName(summoner_name)
 
@@ -201,8 +208,7 @@ class GameExtractor:
 
         # Checks if the match data already in cache file
         if self.use_cache_file \
-                and match_id in self.summuary_file \
-                and match_id in self.cache_data[summoner_name]["matches_data"]:
+                and match_id in self.summuary_data:
             return self.cache_data[summoner_name]["matches_data"][match_id]
 
         url = f'https://europe.api.riotgames.com/lol/match/v5/matches/{match_id}?api_key={self.api_key}'
@@ -216,7 +222,6 @@ class GameExtractor:
             #if "matches_data" not in self.cache_data[summoner_name]:
             #    self.cache_data[summoner_name]["matches_data"] = {}
 
-            #self.cache_data[summoner_name]["matches_data"][match_id] = res
 
             with open(f"./out/{summoner_name}_{match_id}.json", "w", encoding="utf-8") as file:
                 file.writelines({json.dumps(res, indent=4)})
@@ -236,11 +241,13 @@ class GameExtractor:
         """
 
         #DONT sanitze sum name here
-
-        if self.use_cache_file \
-                and list(self.summuary_data.keys())[0]:
-            print("Using cached files for summuary file...")
-            return self.summuary_data
+        try:
+            if self.use_cache_file \
+                    and list(self.summuary_data.keys())[0]:
+                print("Using cached files for summuary file...")
+                return self.summuary_data
+        except IndexError:
+            pass
 
         res = {}
         json_file = {}
@@ -249,9 +256,6 @@ class GameExtractor:
             #stylish, print state of current queries
             current_progress = "{:.2f}".format(i * 100 / len(matches_id))
             print(f"\rGathering data from matches : {current_progress} % done", end='')
-            # Respecting rate limits of riot API (only for 20 secs)
-            #if i % 20 == 0:
-            #    time.sleep(1)
 
             # this already sanitize sum name
             res[match_id] = self.getMatchData(match_id, summoner_name)
@@ -317,47 +321,41 @@ class GameExtractor:
         puuid = self.getPuuidBySummonerName(summoner_name)
         summoner_name = sanitizeSummonerName(summoner_name)
         nb_matches = self.getNumberOfMatches(puuid)
+        print(nb_matches)
         matches_id = []  # list instead of set to extract data later
         match_counter = 0
 
         #if summuary has at least 1 game : 
         #this way we bypass the mathces_id file, less memory used on runtime
-        if self.use_cache_file \
-                and list(self.summuary_data.keys())[0]:
-            print("using cached files for list of game ids...")
-            return list(self.summuary_data.keys())
+        try:
+            if self.use_cache_file \
+                    and not self.force_cache_reload \
+                    and list(self.summuary_data.keys())[0]:
+                print("using cached files for list of game ids...")
+                return list(self.summuary_data.keys())
+        except IndexError:
+            pass
 
-        #start_date = date.fromisocalendar(season, 1, 1)
-        #start_time = time.mktime(start_date.timetuple())
-
-        #nb_day_this_season = (date.today() - start_date).days
-
-        # Gathering 100 games per 10 day
         while match_counter < nb_matches: # while we can append new results
-            #end_time = int(start_time + 60 * 60 * 24 * 10)
-
-            #stylish, print state of current queries {:.2f} is to keep 3 digits of float
-            current_progress = "{:.2f}".format(match_counter * 100 / nb_matches)
-            print(f"\rGettig match list : {current_progress} % done", end='')
+            current_progress = f"{match_counter} / {nb_matches}"
+            print(f"\rGettig match list : {current_progress} matches pulled", end='')
 
             url = f'https://europe.api.riotgames.com/lol/match/v5/matches/by-puuid/{puuid}/ids' \
                   f'?start={match_counter}' \
                   f'&count=100' \
                   f'&api_key={self.api_key}' \
-                  f'&queue=420'  # Indicates that we only want ranked games
+                  f'&type=ranked'  # Indicates that we only want ranked games
 
             res = self.execCurl(url)
 
             matches_id = matches_id + res
-            #matches_id[f'{match_counter}'] = res
             match_counter+=100
 
-            #start_time = end_time
 
             time.sleep(1)
 
         #extra spaces to erease last line
-        print(f"\rPulled all matches id !          ")
+        print(f"\rPulled {len(matches_id)} games, cant pull other ones          ")
 
         # has to save ???
         with open("./out/" + summoner_name + "_matchIds.json", "w", encoding="utf-8") as file:
